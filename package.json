@@ -1,0 +1,49 @@
+{
+  "name": "opencode-english-teacher",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Quiet, isolated English feedback for OpenCode V2",
+  "type": "module",
+  "exports": {
+    ".": "./server.ts",
+    "./server": "./server.ts",
+    "./tui": "./tui.ts",
+    "./rpc": "./src/rpc.ts"
+  },
+  "files": ["server.ts", "tui.ts", "src", "dist", "docs", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:tui": "node scripts/test-tui.mjs",
+    "test:host": "npm run build && tsx scripts/host-smoke.ts",
+    "test:live": "tsx scripts/live-smoke.ts",
+    "check": "npm run build && npm run typecheck && npm test && npm run test:tui"
+  },
+  "engines": { "node": ">=24", "opencode": ">=2.2.5 <3" },
+  "dependencies": {
+    "@opencode/plugin": "2.2.5",
+    "zod": "4.6.7"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.6",
+    "@opentui/core": ">=0.8.0 <0.9",
+    "@opentui/solid": ">=0.8.0 <0.9",
+    "solid-js": ">=1.9.16 <2"
+  },
+  "devDependencies": {
+    "@lydell/node-pty": "1.2.0-beta.18",
+    "@opencode/client": "2.2.5",
+    "@opencode/theme": "2.2.5",
+    "@opentui/core": "0.8.0",
+    "@opentui/solid": "0.8.0",
+    "@types/node": "24.19.2",
+    "@xterm/headless": "6.0.0",
+    "bun": "1.4.4",
+    "effect": "4.0.6",
+    "solid-js": "1.9.18",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

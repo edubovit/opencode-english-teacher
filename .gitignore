@@ -1,2 +1,6 @@
 /.local/
 /opencode.json
+/node_modules/
+/coverage/
+/dist/
+/*.tgz
