@@ -15,7 +15,8 @@ import { PLUGIN_ID, type Correction } from "../src/contracts.ts"
 
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 export const providerID = "english-smoke-fixture"
-const hostRevision = "9bbb8ce18c80f099e0e448775f59d965ead40a21"
+const hostVersion = "2.3.2"
+const hostRevision = "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1"
 const headerEvidence = {
   revision: hostRevision,
   session: `https://github.com/anomalyco/opencode/blob/${hostRevision}/packages/core/src/session/model-request.ts`,
@@ -50,6 +51,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
   const configDirectory = join(root, "config", "opencode")
   const configPath = join(configDirectory, "opencode.json")
   const password = `synthetic-${randomUUID()}`
+  const providerKey = `fixture-${randomUUID()}`
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
   const deadline = AbortSignal.timeout(600_000)
   const env: NodeJS.ProcessEnv = {}
@@ -58,7 +60,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
   }
   for (const [key, value] of Object.entries({
     HOME: "home", USERPROFILE: "home", OPENCODE_TEST_HOME: "home", XDG_CONFIG_HOME: "config", XDG_DATA_HOME: "data",
-    XDG_CACHE_HOME: "cache", XDG_STATE_HOME: "state", APPDATA: "appdata", LOCALAPPDATA: "localappdata", ProgramData: "programdata",
+    XDG_CACHE_HOME: "cache", XDG_STATE_HOME: "state", XDG_RUNTIME_DIR: "runtime", APPDATA: "appdata", LOCALAPPDATA: "localappdata", ProgramData: "programdata",
     TEMP: "temp", TMP: "temp", TMPDIR: "temp",
   })) {
     env[key] = join(root, value)
@@ -68,7 +70,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
   await mkdir(configDirectory, { recursive: true })
   Object.assign(env, {
     OPENCODE_CONFIG_DIR: configDirectory, OPENCODE_CONFIG_PROJECT_DISABLE: "true", OPENCODE_DISABLE_CLAUDE_CODE: "true",
-    OPENCODE_DISABLE_MODELS_FETCH: "true", OPENCODE_DISABLE_FFF: "true", OPENCODE_PASSWORD: password,
+    OPENCODE_DISABLE_MODELS_FETCH: "true", OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_DISABLE_FFF: "true", OPENCODE_PASSWORD: password,
     OPENCODE_LOG_LEVEL: "DEBUG", OPENCODE_DB: join(root, "data", "smoke.db"), LANG: "C.UTF-8", TERM: "xterm-256color",
     npm_config_userconfig: join(root, "npmrc"), npm_config_globalconfig: join(root, "global-npmrc"),
     npm_config_cache: join(root, "cache", "npm"), npm_config_registry: "https://registry.npmjs.org/",
@@ -77,8 +79,8 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
   await writeFile(env.npm_config_globalconfig!, "")
   const version = spawnSync(executable, ["--version"], { cwd: workspace, env, encoding: "utf8", timeout: 20_000, windowsHide: true })
   assert.equal(version.status, 0, `Cannot execute native OpenCode; set OPENCODE_BIN. Artifacts: ${root}`)
-  assert.match(version.stdout, /^opencode v2\.2\.5\s*$/, "This harness targets OpenCode 2.2.5")
-  const sanitize = (value: string) => value.replaceAll(password, "[test-password]").replaceAll(authorization, "[test-authorization]")
+  assert.equal(version.stdout.trim(), `opencode v${hostVersion}`, `This harness targets OpenCode ${hostVersion}; set OPENCODE_BIN`)
+  const sanitize = (value: string) => value.replaceAll(password, "[test-password]").replaceAll(authorization, "[test-authorization]").replaceAll(providerKey, "[fixture-key]")
     .replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]")
   let stage = "setup"
   let host: ChildProcess | undefined
@@ -115,6 +117,10 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
     if (fixtureError) throw fixtureError
   }
   const provider = createServer((request, response) => {
+    if (request.headers.authorization !== `Bearer ${providerKey}`) {
+      response.writeHead(401).end()
+      return
+    }
     void (async () => {
       assert.equal(request.method, "POST", "Unexpected fake-provider method")
       assert.equal(request.url, "/v1/chat/completions", "Unexpected fake-provider route")
@@ -129,7 +135,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
       const sessionID = request.headers["x-opencode-session-id"]?.toString()
       const attribution = request.headers["x-opencode-session"]?.toString()
       const serialized = JSON.stringify(wire)
-      assert.ok(typeof attribution === "string" && attribution.startsWith("ses"), "Missing 2.2.5 request attribution header")
+      assert.ok(typeof attribution === "string" && attribution.startsWith("ses"), "Missing request attribution header")
       assert.equal(serialized.includes(teacherContract), !sessionID, "Session header and fixed teacher contract disagree")
       const captured: Captured = { wire, kind: sessionID ? "coding" : "teacher", sessionID, attribution, closed: false, finished: false }
       requests.push(captured)
@@ -205,7 +211,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
     await save("host-output.log", hostOutput)
     await save("host.log", await readFile(join(root, "data", "opencode", "log", "opencode.log"), "utf8").catch(() => ""))
     await save("requests.json", JSON.stringify(requests, null, 2))
-    await save("result.json", JSON.stringify({ passed: passed && !cleanupError, stage, checks, version: "2.2.5", headerEvidence, plugin, sourceUnchanged: unchanged,
+    await save("result.json", JSON.stringify({ passed: passed && !cleanupError, stage, checks, version: hostVersion, executable, headerEvidence, plugin, sourceUnchanged: unchanged,
       error: error instanceof Error ? error.stack : error, cleanupError: cleanupError instanceof Error ? cleanupError.message : cleanupError }, null, 2))
     await rm(configPath, { force: true })
     if (cleanupError) throw cleanupError
@@ -225,7 +231,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
       signal: AbortSignal.any([deadline, ...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
     client = OpenCode.make({ baseUrl: hostURL, headers: { authorization }, fetch: boundedFetch })
     const info = await client.server.info()
-    assert.equal(info.version, "2.2.5")
+    assert.equal(info.version, hostVersion)
     assert.equal(info.pid, host.pid, "Connected to a host we do not own")
     assert.ok(resolve(info.paths.tmp).startsWith(root + sep), "Host temp directory is not isolated")
     eventAbort = new AbortController()
@@ -258,15 +264,15 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
     config.plugins = ["-opencode.provider.*", { package: pathToFileURL(plugin).href, options }]
     await writeFile(configPath, JSON.stringify(config, null, 2))
   }
-  const loaded = async () => {
+  const loaded = async (directory = workspace) => {
     await until(async () => {
-      const list = (await client.plugin.list({ location: { directory: workspace } })).data
+      const list = (await client.plugin.list({ location: { directory } })).data
       assert.ok(list.every(item => item.source.type === "builtin" || item.id === PLUGIN_ID), "Unexpected external plugin loaded")
       const entry = list.find(item => item.id === PLUGIN_ID)
       if (entry?.state.status === "failed") throw new Error(`Production entrypoint failed: ${entry.state.error}`)
       return entry?.state.status === "active" && entry.features.server && entry.features.tui
     }, "production server/TUI discovery")
-    const models = (await client.model.list({ location: { directory: workspace } })).data
+    const models = (await client.model.list({ location: { directory } })).data
     assert.equal(models.length, 2, "Unexpected provider model inventory")
     assert.ok(models.every(model => model.providerID === providerID), "A non-fixture model is available")
     assert.deepEqual(await client.credential.list(), [], "Private host discovered credentials")
@@ -312,7 +318,7 @@ export async function fixture(options: { plugin?: string; pack?: boolean } = {})
     config = {
       $schema: "https://opencode.ai/config.json", model: `${providerID}/source`,
       providers: { [providerID]: { package: "@opencode/ai/providers/openai-compatible",
-        settings: { baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: "synthetic-no-credential", encoding: "none", transport: "http" },
+        settings: { baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: providerKey, encoding: "none", transport: "http" },
         models: { source: model, teacher: model } } },
       policies: [{ action: "provider.use", resource: "*", effect: "deny" }, { action: "provider.use", resource: providerID, effect: "allow" }],
       permissions: [{ action: "*", resource: "*", effect: "deny" }, { action: "read", resource: "*", effect: "allow" }],

@@ -166,8 +166,14 @@ export const createTeacher = Effect.fnUntraced(function* (
     }
   })
 
-  const withSession = <A>(id: string, action: (session: SessionSnapshot) => Effect.Effect<A, unknown>) =>
-    Effect.suspend(() => serialized(id, owned(id, epoch(id)).pipe(Effect.flatMap(action))))
+  const withSession = <A>(id: string, action: (session: SessionSnapshot, captured: number) => Effect.Effect<A, unknown>) =>
+    Effect.suspend(() => {
+      const captured = epoch(id)
+      return serialized(id, owned(id, captured).pipe(Effect.flatMap((session) => action(session, captured))))
+    })
+
+  const readSession = <A>(id: string, read: (session: SessionSnapshot) => Effect.Effect<A, unknown>) =>
+    withSession(id, (session, captured) => read(session).pipe(Effect.tap(() => owned(id, captured))))
 
   const failJob = Effect.fnUntraced(function* (job: Job, error: unknown) {
     if (!active || !job.valid) return
@@ -238,8 +244,11 @@ export const createTeacher = Effect.fnUntraced(function* (
           job.settled = true
           yield* store.commit(prepared)
           clearError(admission)
-          if (authorized(admission.sessionID, job.epoch) && !observationError)
-            yield* host.corrected(admission.sessionID, admission.id, after.title || "Untitled session")
+          yield* restore(Effect.gen(function* () {
+            const owner = yield* owned(admission.sessionID, job.epoch)
+            if (!owner.parentID && !observationError)
+              yield* host.corrected(admission.sessionID, admission.id, owner.title || "Untitled session")
+          })).pipe(Effect.catchCause(() => Effect.void))
         }).pipe(Effect.ensuring(Effect.suspend(() => prepared && !job.settled
           ? store.rollback(admission.sessionID).pipe(Effect.orDie)
           : Effect.void)))
@@ -308,6 +317,7 @@ export const createTeacher = Effect.fnUntraced(function* (
           if (!controlLive(control)) return yield* Effect.fail(new Unavailable())
           yield* changed(sessionID)
           const status = yield* statusInside(current)
+          yield* restore(owned(sessionID, control.epoch))
           if (!controlLive(control)) return yield* Effect.fail(new Unavailable())
           return status
         }).pipe(Effect.ensuring(Effect.suspend(() => prepared && !control.settled
@@ -373,13 +383,13 @@ export const createTeacher = Effect.fnUntraced(function* (
       yield* interrupt(revoke(undefined, true))
       for (const id of affected) yield* changed(id)
     }),
-    status: (id: string) => withSession(id, statusInside),
-    view: (id: string, commentID?: string, direction?: "older" | "newer") => withSession(id, (session) => Effect.gen(function* () {
+    status: (id: string) => readSession(id, statusInside),
+    view: (id: string, commentID?: string, direction?: "older" | "newer") => readSession(id, (session) => Effect.gen(function* () {
       const status = yield* statusInside(session)
       const view = yield* store.view(id, commentID, direction)
       return { ...view, status }
     })),
-    list: (id: string, cursor?: string, limit?: number) => withSession(id, () => store.list(id, cursor, limit)),
+    list: (id: string, cursor?: string, limit?: number) => readSession(id, () => store.list(id, cursor, limit)),
     setEnabled,
   }
 })

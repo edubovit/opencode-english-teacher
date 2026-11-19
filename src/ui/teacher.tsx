@@ -27,6 +27,7 @@ export function Teacher(props: { api: TeacherUI; model?: TeacherModel; title: st
   const status = () => state()?.view?.status
   const comment = () => state()?.view?.comment
   const isList = createMemo(() => state()?.mode === "list")
+  const error = () => (isList() && state()?.listError) || state()?.error || status()?.error
   const ownsInput = () => props.api.keymap.mode.current() === INPUT_MODE
   const short = () => size().height < 14
   const selectedID = createMemo(() => state()?.page?.items[state()?.selected ?? 0]?.id)
@@ -44,6 +45,16 @@ export function Teacher(props: { api: TeacherUI; model?: TeacherModel; title: st
   function back() {
     if (isList()) props.model?.back()
     else props.close()
+  }
+  function statusText() {
+    if (!props.model) return "No session"
+    const value = status()
+    if (!value) return state()?.error ? "Status unavailable" : "Loading…"
+    const parts = [!value.eligible ? "Unavailable in child sessions" : value.enabled ? "Analysis on" : "Analysis off"]
+    if (value.pending) parts.push(`${value.pending} pending`)
+    if (state()?.loading) parts.push("Refreshing…")
+    if (state()?.toggling) parts.push("Saving…")
+    return parts.join(" · ")
   }
   useKeyboard(key => {
     if (key.defaultPrevented || !ownsInput() || key.ctrl || key.meta || key.option) return
@@ -71,15 +82,15 @@ export function Teacher(props: { api: TeacherUI; model?: TeacherModel; title: st
 
   return <box id="english-teacher" width="100%" height="100%" flexDirection="column" paddingLeft={1} paddingRight={1} backgroundColor={props.api.theme.background.base}>
     <box id="english-header" flexShrink={0} flexDirection="column">
-      <text id="english-title" fg={props.api.theme.text.base} height={1} truncate><b>English teacher</b>{short() ? "" : ` · ${displayText(props.title)}`}</text>
-      <text fg={props.api.theme.text.muted} height={1} truncate>{!props.model ? "No session" : status() ? `${status()!.eligible ? status()!.enabled ? "Analysis on" : "Analysis off" : "Unavailable in child sessions"}${status()!.pending ? ` · ${status()!.pending} pending` : ""}${state()?.loading ? " · Refreshing…" : ""}${state()?.toggling ? " · Saving…" : ""}` : "Loading…"}</text>
+      <text id="english-title" fg={props.api.theme.text.base} height={1} truncate><b>English teacher</b>{props.model && !short() && props.title ? ` · ${displayText(props.title)}` : ""}</text>
+      <text fg={props.api.theme.text.muted} height={1} truncate>{statusText()}</text>
       <box flexDirection="row" height={1}>
         <text fg={props.api.theme.text.action.primary.base} onMouseDown={() => { if (ownsInput()) back() }}>Esc {isList() ? "back" : "close"}</text>
         <Show when={props.model}><text fg={props.api.theme.text.action.primary.base} onMouseDown={() => { if (ownsInput()) void props.model?.openList() }}> · l list</text><Show when={status()?.eligible}><text fg={props.api.theme.text.action.primary.base} onMouseDown={() => { if (ownsInput()) void props.model?.toggle() }}>{` · t ${status()?.enabled ? "off" : "on"}`}</text></Show><text fg={props.api.theme.text.action.primary.base} onMouseDown={() => { if (ownsInput()) { void props.model?.refresh(); if (isList()) void props.model?.refreshList() } }}> · r refresh</text></Show>
       </box>
     </box>
-    <Show when={state()?.error || status()?.error}>
-      <text id="english-error" flexShrink={0} fg={props.api.theme.text.feedback.error.base} maxHeight={short() ? 2 : 3} wrapMode="word">{state()?.error || status()?.error}</text>
+    <Show when={error()}>
+      <text id="english-error" flexShrink={0} fg={props.api.theme.text.feedback.error.base} maxHeight={short() ? 2 : 3} wrapMode="word">{error()}</text>
     </Show>
     <Show when={isList()} fallback={<>
       <Show when={comment()}>{item => <box flexShrink={0} flexDirection="column">
@@ -90,9 +101,9 @@ export function Teacher(props: { api: TeacherUI; model?: TeacherModel; title: st
         <Show when={comment()} fallback={<text fg={props.api.theme.text.base} wrapMode="word">{!props.model ? "Open a session first." : !status() ? state()?.error ? "History is unavailable." : "Loading comments…" : !status()!.eligible ? "English analysis is unavailable in child sessions." : "No comments yet."}</text>}>{item => <For each={item().corrections}>{(correction, index) => <text id={`english-correction-${index()}`} flexShrink={0} marginBottom={1} fg={props.api.theme.text.base} wrapMode="word">{`${item().corrections.length > 1 ? `${index() + 1}. ` : ""}"${displayText(correction.original)}" → "${displayText(correction.replacement)}"${correction.explanation ? ` — ${displayText(correction.explanation)}` : ""}`}</text>}</For>}</Show>
       </scrollbox>
     </>}>
-      <text fg={props.api.theme.text.muted} height={1} flexShrink={0} truncate>{`Comments · page ${(state()?.pageIndex ?? 0) + 1} · ${state()?.page?.total ?? 0} saved${state()?.listStale ? " · Updated: r refresh" : ""}${state()?.listLoading ? " · Loading…" : ""}`}</text>
+      <text fg={props.api.theme.text.muted} height={1} flexShrink={0} truncate>{`Comments${state()?.page ? ` · page ${state()!.pageIndex + 1} · ${state()!.page!.total} saved` : ""}${state()?.listStale ? " · Updated: r refresh" : ""}${state()?.listLoading ? " · Loading…" : ""}`}</text>
       <scrollbox id="english-list" ref={list} flexGrow={1} flexBasis={0} minHeight={0} scrollX={false} contentOptions={{ flexDirection: "column", paddingRight: 1 }} scrollbarOptions={{ trackOptions: { backgroundColor: props.api.theme.background.base, foregroundColor: props.api.theme.scrollbar.base } }}>
-        <Show when={state()?.page?.items.length} fallback={<text fg={props.api.theme.text.muted}>{state()?.listLoading ? "Loading history…" : state()?.error ? "History is unavailable." : "No comments yet."}</text>}>
+        <Show when={state()?.page?.items.length} fallback={<text fg={props.api.theme.text.muted}>{state()?.listLoading ? "Loading history…" : state()?.listError ? "History is unavailable." : "No comments yet."}</text>}>
           <For each={state()?.page?.items}>{(item, index) => <box id={`english-row-${item.id}`} flexShrink={0} flexDirection="column" backgroundColor={index() === state()?.selected ? props.api.theme.background.formfield.selected : props.api.theme.background.base}>
             <text fg={index() === state()?.selected ? props.api.theme.text.formfield.focused : props.api.theme.text.base} maxHeight={2} wrapMode="word">{`${index() === state()?.selected ? "›" : " "} ${displayText(item.preview)}`}</text>
             <text fg={props.api.theme.text.muted} height={1} truncate>{`#${(state()?.pageIndex ?? 0) * 20 + index() + 1} · ${sourceTime(item.sourceTime)}`}</text>
@@ -100,6 +111,6 @@ export function Teacher(props: { api: TeacherUI; model?: TeacherModel; title: st
         </Show>
       </scrollbox>
     </Show>
-    <text id="english-hints" fg={props.api.theme.text.muted} flexShrink={0} wrapMode="word">{isList() ? "↑↓ select · Enter open · PgUp older page · PgDn newer page" : `↑↓ scroll · PgUp older · PgDn newer${(state()?.view?.position ?? 0) > 1 ? ` (${state()!.view!.position - 1})` : ""}`}</text>
+    <Show when={isList() ? state()?.page?.items.length : comment()}><text id="english-hints" fg={props.api.theme.text.muted} flexShrink={0} wrapMode="word">{isList() ? "↑↓ select · Enter open · PgUp older page · PgDn newer page" : `↑↓ scroll · PgUp older · PgDn newer${(state()?.view?.position ?? 0) > 1 ? ` (${state()!.view!.position - 1})` : ""}`}</text></Show>
   </box>
 }

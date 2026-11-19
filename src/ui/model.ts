@@ -8,6 +8,7 @@ export interface TeacherState {
   toggling: boolean
   listLoading: boolean
   error?: string
+  listError?: string
   page?: CommentList
   pageIndex: number
   selected: number
@@ -19,6 +20,7 @@ export class TeacherModel {
   private scope = new AbortController()
   private readers = new Set<(state: TeacherState) => void>()
   private refreshQueued = false
+  private changes = 0
   private cursors: (string | undefined)[] = [undefined]
   private pageRequest?: AbortController
 
@@ -46,6 +48,7 @@ export class TeacherModel {
   }
 
   changed() {
+    this.changes++
     this.update({ listStale: !!this.state.page })
     void this.refresh()
   }
@@ -105,7 +108,6 @@ export class TeacherModel {
   }
 
   async refreshList() {
-    this.cursors = [undefined]
     await this.loadPage(0, false, this.state.page?.items[this.state.selected]?.id)
   }
 
@@ -114,14 +116,16 @@ export class TeacherModel {
     this.pageRequest?.abort()
     const request = new AbortController()
     this.pageRequest = request
-    this.update({ listLoading: true, error: undefined })
+    const changes = this.changes
+    this.update({ listLoading: true, listError: undefined })
     try {
       const page = await this.remote.list(this.cursors[index], AbortSignal.any([request.signal, this.scope.signal]))
       if (request.signal.aborted || this.scope.signal.aborted) return
       const preserved = selectedID ? page.items.findIndex(item => item.id === selectedID) : -1
-      this.update({ page, pageIndex: index, selected: preserved >= 0 ? preserved : last ? Math.max(0, page.items.length - 1) : 0, listStale: false })
+      this.cursors.length = index + 1
+      this.update({ page, pageIndex: index, selected: preserved >= 0 ? preserved : last ? Math.max(0, page.items.length - 1) : 0, listStale: this.changes !== changes })
     } catch {
-      if (!request.signal.aborted) this.update({ error: "Could not load history. Press r to retry." })
+      if (!request.signal.aborted) this.update({ listError: "Could not load history. Press r to retry." })
     } finally {
       if (this.pageRequest === request) {
         this.pageRequest = undefined

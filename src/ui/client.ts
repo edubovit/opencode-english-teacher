@@ -53,21 +53,17 @@ export function watchTeacher(
     const { sessionID, commentID } = event.data
     const key = JSON.stringify([sessionID, commentID])
     if (scope.signal.aborted || seen.has(key)) return
-    seen.add(key)
     const signal = AbortSignal.any([scope.signal, AbortSignal.timeout(15_000)])
-    try {
-      const session = await client.session.get({ sessionID }, { signal })
-      if (signal.aborted || session.parentID || session.location.directory !== event.location.directory) return
-      api.ui.toast.show({
-        title: `English teacher · ${displayText(session.title || event.data.sessionTitle || sessionID).slice(0, 80)}`,
-        message: "New comment saved. Open this session and use /english.",
-        sessionID,
-        variant: "info",
-        duration: 5000,
-      })
-    } catch {
-      if (!scope.signal.aborted) seen.delete(key)
-    }
+    const session = await client.session.get({ sessionID }, { signal }).catch(() => undefined)
+    if (!session || signal.aborted || seen.has(key) || session.parentID || session.location.directory !== event.location.directory) return
+    api.ui.toast.show({
+      title: `English teacher · ${displayText(session.title || event.data.sessionTitle || sessionID).slice(0, 80)}`,
+      message: "New comment saved. Open this session and use /english.",
+      sessionID,
+      variant: "info",
+      duration: 5000,
+    })
+    seen.add(key)
   }, { signal: scope.signal })
   return () => {
     scope.abort()

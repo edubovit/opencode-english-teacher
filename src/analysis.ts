@@ -34,6 +34,29 @@ function withoutHtmlCode(text: string): string {
   return result + text.slice(cursor)
 }
 
+function withoutInlineCode(line: string): string {
+  if (!line.includes("`")) return line
+  const runs = Array.from(line.matchAll(/`+/g))
+  const next = new Map<number, number>()
+  const close = new Map<number, number>()
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const length = runs[i][0].length
+    const end = next.get(length)
+    if (end !== undefined) close.set(i, end)
+    next.set(length, i)
+  }
+  let result = ""
+  let cursor = 0
+  for (let i = 0; i < runs.length; i++) {
+    const end = close.get(i)
+    if (end === undefined) continue
+    result += line.slice(cursor, runs[i].index) + omitted
+    cursor = runs[end].index + runs[end][0].length
+    i = end
+  }
+  return result + line.slice(cursor)
+}
+
 export function prepareText(raw: string): string {
   if (/^\s*[{[]/u.test(raw)) {
     try {
@@ -47,7 +70,7 @@ export function prepareText(raw: string): string {
   let fence: { character: string; length: number } | undefined
   let copied = false
   let diff = false
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/u)
     const marker = fenceMatch?.[1]
     if (marker) {
@@ -75,16 +98,15 @@ export function prepareText(raw: string): string {
       selected.push("")
       continue
     }
-    if (/^(?:diff --git |index [\da-f]+\.\.|@@ |--- [ab/] |\+\+\+ [ab/] )/u.test(line)) diff = true
+    if (/^(?:diff --git |index [\da-f]+\.\.|@@ )/u.test(line) ||
+      (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ "))) diff = true
     if (copied || diff || /^\s*>/u.test(line) || logLine.test(line) || codeLine.test(line) ||
       (/^(?: {4}|\t)/u.test(line) && !list && !continuation)) {
       selected.push("")
       continue
     }
-    const prose = line
-      .replace(/!?\[([^\[\]\n]*)\]\([^\n()]*\)/gu, (_, label: string) => label === "omitted" ? omitted : label)
-      .replace(/(`+)[^`\n]*?\1/gu, omitted)
-      .replace(technical, omitted)
+    const labels = line.replace(/!?\[([^\[\]\n]*)\]\([^\n()]*\)/gu, (_, label: string) => label === "omitted" ? omitted : label)
+    const prose = withoutInlineCode(labels).replace(technical, omitted)
     if (!/\p{Script=Latin}/u.test(prose.replaceAll(omitted, ""))) {
       selected.push("")
       continue

@@ -1,6 +1,6 @@
 {
   "name": "opencode-english-teacher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Quiet, isolated English feedback for OpenCode V2",
   "type": "module",
@@ -21,28 +21,28 @@
     "test:live": "tsx scripts/live-smoke.ts",
     "check": "npm run build && npm run typecheck && npm test && npm run test:tui"
   },
-  "engines": { "node": ">=24", "opencode": ">=2.2.5 <3" },
+  "engines": { "node": ">=24", "opencode": ">=2.3.2 <3" },
   "dependencies": {
-    "@opencode/plugin": "2.2.5",
+    "@opencode/plugin": "2.3.2",
     "zod": "4.6.7"
   },
   "peerDependencies": {
-    "effect": "^4.0.6",
-    "@opentui/core": ">=0.8.0 <0.9",
-    "@opentui/solid": ">=0.8.0 <0.9",
+    "effect": "^4.1.0",
+    "@opentui/core": ">=0.8.4 <0.9",
+    "@opentui/solid": ">=0.8.4 <0.9",
     "solid-js": ">=1.9.16 <2"
   },
   "devDependencies": {
     "@lydell/node-pty": "1.2.0-beta.18",
-    "@opencode/client": "2.2.5",
-    "@opencode/theme": "2.2.5",
-    "@opentui/core": "0.8.0",
-    "@opentui/solid": "0.8.0",
+    "@opencode/client": "2.3.2",
+    "@opencode/theme": "2.3.2",
+    "@opentui/core": "0.8.4",
+    "@opentui/solid": "0.8.4",
     "@types/node": "24.19.2",
     "@xterm/headless": "6.0.0",
     "bun": "1.4.4",
-    "effect": "4.0.6",
-    "solid-js": "1.9.18",
+    "effect": "4.1.0",
+    "solid-js": "1.9.17",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   }

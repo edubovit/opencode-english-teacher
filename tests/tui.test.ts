@@ -110,6 +110,38 @@ test("back/dispose cancels pending reads and prevents late state publication", a
   assert.notEqual(model.state.view?.comment?.id, "disposed")
 })
 
+test("a change during a history request keeps the returned snapshot marked stale", async () => {
+  const { remote } = fixture()
+  const model = new TeacherModel(remote)
+  const pending = deferred<CommentList>()
+  remote.list = () => pending.promise
+  const opening = model.openList()
+  model.changed()
+  pending.resolve({ items: [], total: 0, next: null })
+  await opening
+  assert.equal(model.state.listStale, true)
+  await model.refreshList()
+  assert.equal(model.state.listStale, false)
+  model.dispose()
+})
+
+test("a failed history refresh keeps the current page and its previous-page cursor", async () => {
+  const { remote } = fixture(Array.from({ length: 45 }, (_, i) => comment(`item-${i}`)))
+  const model = new TeacherModel(remote)
+  await model.openList()
+  await model.page("older")
+  await model.page("older")
+  const list = remote.list
+  remote.list = async () => { throw Error("offline") }
+  await model.refreshList()
+  assert.equal(model.state.pageIndex, 2)
+  remote.list = list
+  await model.page("newer")
+  assert.equal(model.state.pageIndex, 1)
+  assert.equal(model.state.page?.items[0].id, "item-20")
+  model.dispose()
+})
+
 test("empty, child, disabled and failed operations remain distinct", async () => {
   const { data, remote } = fixture([])
   const model = new TeacherModel(remote)
@@ -195,5 +227,8 @@ test("live cross-session toasts deduplicate, validate ownership, do not navigate
   assert.equal(toasts.length, 1)
   await listeners.get("corrected")!(event("one"))
   assert.equal(toasts.length, 1)
+  await listeners.get("corrected")!(event("late"))
+  await listeners.get("corrected")!(event("moved"))
+  assert.equal(toasts.length, 3, "Only displayed notifications should be remembered across reconnects")
   reconnected()
 })

@@ -32,13 +32,16 @@ function themeFixture(mode: "dark" | "light" = "dark") {
   }), mode)
 }
 
-async function setup(t: { after(fn: () => void | Promise<void>): void }, width = 80, height = 24, options: { empty?: boolean; child?: boolean; noSession?: boolean; error?: string; disabled?: boolean } = {}) {
+async function setup(t: { after(fn: () => void | Promise<void>): void }, width = 80, height = 24, options: { empty?: boolean; child?: boolean; noSession?: boolean; readError?: boolean; error?: string; disabled?: boolean } = {}) {
   const f = fixture(options.empty ? [] : [comment("newest", true), ...Array.from({ length: 25 }, (_, i) => comment(`older-${i}`))])
   f.data.eligible = !options.child
   f.data.enabled = !options.disabled
   f.data.error = options.error ?? null
   const read = f.remote.view
-  f.remote.view = async (...args) => structuredClone(await read(...args))
+  f.remote.view = async (...args) => {
+    if (options.readError) throw new Error("unreachable")
+    return structuredClone(await read(...args))
+  }
   const model = new TeacherModel(f.remote)
   let mode = "base", closed = 0, released = 0
   const [theme, setTheme] = createSignal(themeFixture())
@@ -58,7 +61,7 @@ async function setup(t: { after(fn: () => void | Promise<void>): void }, width =
     screen.mockInput.pressKey(name)
     await settle()
   }
-  await until(() => options.noSession ? frame().includes("Open a session first.") : !!model.state.view)
+  await until(() => options.noSession ? frame().includes("Open a session first.") : options.readError ? !!model.state.error : !!model.state.view)
   return { ...f, model, screen, frame, settle, until, key, setTheme, setMode: (value: string) => { mode = value }, closed: () => closed, released: () => released }
 }
 
@@ -190,7 +193,10 @@ test("live resolved theme, Unicode and resize keep content and navigation usable
 for (const options of [{ empty: true }, { empty: true, disabled: true }, { child: true, empty: true }, { noSession: true }, { empty: true, error: "Provider unavailable: check model configuration." }]) test(`production status state ${JSON.stringify(options)}`, async t => {
   const view = await setup(t, 60, 16, options)
   const text = view.frame()
-  if (options.noSession) assert.match(text, /Open a session first\./)
+  if (options.noSession) {
+    assert.match(text, /Open a session first\./)
+    assert.doesNotMatch(text, /PgUp|PgDn/)
+  }
   else if (options.child) {
     assert.match(text, /unavailable in child sessions/i)
     assert.doesNotMatch(text, /t off|t on/)
@@ -200,6 +206,23 @@ for (const options of [{ empty: true }, { empty: true, disabled: true }, { child
     if (options.error) assert.match(text, /Provider unavailable/)
   }
   assert.doesNotMatch(text, /English is correct/)
+})
+
+test("an unavailable history is not labeled as loading, empty or zero saved", async t => {
+  const view = await setup(t, 70, 16, { readError: true })
+  assert.match(view.frame(), /History is unavailable/)
+  assert.doesNotMatch(view.frame(), /Loading/)
+  view.remote.list = async () => { throw new Error("offline") }
+  await view.key("l")
+  await view.model.refresh()
+  await view.settle()
+  assert.match(view.frame(), /Could not load history/)
+  assert.doesNotMatch(view.frame(), /0 saved|No comments yet|Loading/)
+  view.remote.view = fixture().remote.view
+  view.model.changed()
+  await view.settle()
+  assert.match(view.frame(), /Could not load history/)
+  assert.doesNotMatch(view.frame(), /No comments yet/)
 })
 
 test("production unmount aborts pending request and revokes input mode", async t => {

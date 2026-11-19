@@ -28,6 +28,8 @@ export async function verifyTui(test: HostFixture, sessionID: string) {
   const cliConfig = join(test.root, "config", "opencode", "cli.json")
   const theme = async (mode: "dark" | "light") => writeFile(cliConfig, JSON.stringify({ theme: { mode }, animations: false, tabs: { mode: "off" } }))
   await theme("dark")
+  const history = await test.client.session.context({ sessionID })
+  const inbox = await test.client.session.inbox.list({ sessionID })
   const screen = new headless.Terminal({ cols: 100, rows: 30, allowProposedApi: true, scrollback: 0 })
   const child = spawn(test.executable, ["--server", test.url, "--session", sessionID, test.workspace], {
     cols: 100, rows: 30, cwd: test.workspace, env: test.env, name: "xterm-256color",
@@ -70,8 +72,6 @@ export async function verifyTui(test: HostFixture, sessionID: string) {
     await test.quiet(250)
   }
   let calls = test.requests.length
-  const history = await test.client.session.context({ sessionID })
-  const inbox = await test.client.session.inbox.list({ sessionID })
   let completed = false
   try {
     await seen("The latest clear ash example is already correct.")

@@ -54,23 +54,36 @@ interface TextPayload {
   skills?: readonly { mention?: Mention }[]
 }
 
+const MAX_ATTACHMENTS = 128
+
 export function admittedText(payload: TextPayload): string {
-  const ranges = [...payload.files ?? [], ...payload.agents ?? [], ...payload.skills ?? []]
-    .flatMap((item) => item.mention ? [item.mention] : [])
-    .filter((range) => Number.isInteger(range.start) && Number.isInteger(range.end) && range.start >= 0 &&
-      range.end > range.start && range.end <= payload.text.length && payload.text.slice(range.start, range.end) === range.text)
-    .sort((a, b) => a.start - b.start)
+  const { text } = payload
+  const groups = [payload.files ?? [], payload.agents ?? [], payload.skills ?? []]
+  if (text.length > MAX_INPUT || groups.reduce((count, group) => count + group.length, 0) > MAX_ATTACHMENTS) return ""
+  const ranges: [number, number][] = []
+  for (const group of groups) for (const { mention } of group) {
+    if (!mention) continue
+    const label = mention.text
+    if (!label || label.length > text.length) return ""
+    let at = mention.start
+    if (!Number.isSafeInteger(at) || at < 0 || mention.end !== at + label.length || !text.startsWith(label, at)) {
+      at = text.indexOf(label)
+      if (at === -1 || text.indexOf(label, at + 1) !== -1) return ""
+    }
+    ranges.push([at, at + label.length])
+  }
   let result = ""
   let end = 0
-  for (const range of ranges) {
-    result += payload.text.slice(end, Math.max(end, range.start))
-    result += "[omitted]"
-    end = Math.max(end, range.end)
+  for (const [start, stop] of ranges.sort(([a], [b]) => a - b)) {
+    if (start >= end) result += text.slice(end, start) + "[omitted]"
+    end = Math.max(end, stop)
   }
-  return result + payload.text.slice(end)
+  return result + text.slice(end)
 }
 
 const MentionSchema = z.object({ mention: z.object({ start: z.number(), end: z.number(), text: z.string() }).optional() })
+const AttachmentsSchema = z.custom<unknown[]>((value) => Array.isArray(value) && value.length <= MAX_ATTACHMENTS)
+  .pipe(z.array(MentionSchema)).optional()
 const AdmissionEventSchema = z.object({
   type: z.literal("session.inbox.enqueued"),
   created: z.number().finite(),
@@ -83,9 +96,9 @@ const AdmissionEventSchema = z.object({
       type: z.literal("user"),
       payload: z.object({
         text: z.string(),
-        files: z.array(MentionSchema).optional(),
-        agents: z.array(MentionSchema).optional(),
-        skills: z.array(MentionSchema).optional(),
+        files: AttachmentsSchema,
+        agents: AttachmentsSchema,
+        skills: AttachmentsSchema,
       }),
     }),
   }),
@@ -103,7 +116,7 @@ export function admissionFromEvent(raw: unknown, directory: string, workspaceID?
     sourceTime: event.created,
     directory,
     ...(workspaceID === undefined ? {} : { workspaceID }),
-    text: payload.text.length > MAX_INPUT ? "" : admittedText(payload),
+    text: admittedText(payload),
     sourceLength: payload.text.length,
   }
 }

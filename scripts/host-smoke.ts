@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFile, writeFile, unlink } from "node:fs/promises"
+import { mkdir, readFile, writeFile, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { DEFAULT_TEACHER_PROMPT } from "../src/analysis.ts"
 import { fixture, png, providerID } from "./host-fixture.ts"
@@ -66,7 +66,7 @@ try {
   assert.equal((await status(root)).enabled, true)
   assert.equal((await status(root)).overridden, false)
   const unauthorized = await fetch(`${test.url}/api/rpc/english-teacher/status`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { sessionID: root } }), signal: AbortSignal.timeout(10_000),
+    method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { sessionID: root } }), signal: AbortSignal.timeout(10_000),
   })
   assert.equal(unauthorized.status, 401)
   assert.equal((await toggle(root, false)).overridden, true)
@@ -237,13 +237,17 @@ try {
   test.checks.push("sessions without explicit model inherit selected-agent model/variant or location default; teacher and coding wire agree; session model/agent unchanged")
 
   test.stage("all model/variant overrides and invalid configuration")
+  const afterReload = (condition: () => Promise<boolean>, label: string) => test.until(() => condition().catch((error: unknown) => {
+    if (error && typeof error === "object" && "type" in error && error.type === "rpc.unavailable") return false
+    throw error
+  }), label)
   for (const [name, options, expected] of [
     ["model", { model: `${providerID}/teacher` }, { providerID, id: "teacher" }],
     ["variant", { variant: "low" }, { ...sourceModel, variant: "low" }],
     ["both", { model: `${providerID}/teacher`, variant: "low" }, { providerID, id: "teacher", variant: "low" }],
   ] as const) {
     await test.writeOptions({ enabledByDefault: false, ...options })
-    await test.until(async () => !(await status(other)).enabled, "watched default change")
+    await afterReload(async () => !(await status(other)).enabled, "watched default change")
     await test.loaded()
     const selectionSession = await create(`selection ${name}`)
     await toggle(selectionSession, true)
@@ -253,15 +257,15 @@ try {
     assert.equal(request.wire.reasoning_effort, "variant" in expected ? expected.variant : undefined)
     assert.deepEqual((await test.client.session.get({ sessionID: selectionSession })).model, sourceModel, "Plugin changed coding model")
     await test.writeOptions({})
-    await test.until(async () => (await status(other)).enabled, "watched default restoration")
+    await afterReload(async () => (await status(other)).enabled, "watched default restoration")
   }
   await test.writeOptions({ enabledByDefault: "invalid" })
-  await test.until(async () => Boolean((await status(root)).error), "invalid options fail closed")
+  await afterReload(async () => Boolean((await status(root)).error), "invalid options fail closed")
   await test.loaded()
   await assertSilent(() => prompt(root, "The invalid configuration example gives advices."))
   assert.equal((await view(root)).comment!.id, first.id)
   await test.writeOptions({ variant: "not-a-real-variant" })
-  await test.until(async () => !(await status(other)).error, "valid configuration with unavailable variant loaded")
+  await afterReload(async () => !(await status(other)).error, "valid configuration with unavailable variant loaded")
   const unsupported = await create("unsupported selection")
   await assertSilent(async () => {
     await prompt(unsupported, "The unavailable variant example gives advices.")
@@ -269,9 +273,9 @@ try {
   })
   assert.equal((await status(unsupported)).count, 0)
   await test.writeOptions({ enabledByDefault: false })
-  await test.until(async () => !(await status(other)).enabled, "unsupported variant removed with observable default change")
+  await afterReload(async () => !(await status(other)).enabled, "unsupported variant removed with observable default change")
   await test.writeOptions({})
-  await test.until(async () => (await status(other)).enabled && !(await status(root)).error, "configuration recovery")
+  await afterReload(async () => (await status(other)).enabled && !(await status(root)).error, "configuration recovery")
   test.checks.push("four model/variant selection combinations verified on wire and storage; source model untouched; reload updates defaults but preserves overrides; invalid options suspend generation; unavailable variant fails without fallback")
 
   test.stage("private restart preserves storage without replaying work or notifications")
@@ -304,6 +308,21 @@ try {
     await verifyTui(test, busy)
     test.checks.push("installed TUI slash/palette, RPC, latest comment, page navigation, arrow scrolling, list/toggle/Escape, resize and input ownership")
   }
+  test.stage("authenticated RPC remains isolated across plugin locations")
+  const ownerHistory = await test.rpc.list({ sessionID: busy }, test.rpcOptions)
+  const directory = join(test.root, "second-workspace")
+  await mkdir(directory)
+  await test.loaded(directory)
+  const foreignOptions = { ...test.rpcOptions, location: { directory } }
+  const foreign = await test.client.session.create({ title: "Synthetic second location", location: { directory }, model: sourceModel })
+  assert.equal((await test.rpc.status({ sessionID: foreign.id }, foreignOptions)).enabled, true)
+  await assert.rejects(test.rpc.view({ sessionID: busy }, foreignOptions), unavailable)
+  await assert.rejects(test.rpc.list({ sessionID: busy }, foreignOptions), unavailable)
+  await assert.rejects(test.rpc.setEnabled({ sessionID: busy, enabled: false }, foreignOptions), unavailable)
+  await assert.rejects(status(foreign.id), unavailable)
+  assert.equal((await status(busy)).enabled, true)
+  assert.deepEqual(await test.rpc.list({ sessionID: busy }, test.rpcOptions), ownerHistory)
+  test.checks.push("a second active plugin location cannot read corrected history or toggle a session owned by the first, and vice versa for status")
   for (const event of test.corrected) {
     assert.deepEqual(Object.keys(event.data).sort(), ["commentID", "sessionID", "sessionTitle"])
     assert.equal(event.location.directory, test.workspace)

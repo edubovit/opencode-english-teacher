@@ -12,7 +12,7 @@ Analysis consumes additional model usage, including when no correction is return
 
 ## Install from a checkout
 
-Use OpenCode 2.2.5 or a compatible V2 host. Development commands need Node 24 or newer; rendering tests use the project's bundled Bun.
+Use OpenCode 2.3.2. Later V2 versions may work but need their own compatibility check. Building from a checkout needs Node 24 or newer.
 
 In this repository:
 
@@ -100,7 +100,7 @@ Use nonblank UTF-8 text, at most 64 KiB. Invalid/unreadable files produce an ana
 - Analysis failures appear in `/english`, not as corrections. A failed request does not mean the English is correct.
 - Each location runs at most two analyses at once, with 100 waiting jobs and a two-minute analysis deadline including queue time. Final persistence/cleanup is drained, not forcibly interrupted by that deadline. Messages over 64,000 UTF-16 characters are skipped with a visible status rather than silently truncated.
 - Stateless generation is an experimental OpenCode API. Providers requiring session-specific request hooks may be incompatible. Unsupported models, variants, or authentication paths fail without model fallback or conversation-context leakage.
-- Model choice is sampled when a message is observed. A simultaneous model change can race with the coding assistant's later selection.
+- The teacher samples the session's model choice when it observes the message. A simultaneous model change, or a plugin that rewrites only the coding assistant's model, can make the two requests use different models.
 - Corrections and short source previews remain in host plugin storage until session deletion is observed or reconciled. Provider usage already incurred cannot be cancelled or refunded by this plugin.
 
 See [development and testing](docs/contributing/DEVELOPMENT.md) for test commands and implementation boundaries.

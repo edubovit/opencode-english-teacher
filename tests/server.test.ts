@@ -38,7 +38,24 @@ test("admission adapter accepts only same-location successful user text and excl
   for (const type of ["synthetic", "compaction", "move", "assistant", "tool", "shell"])
     assert.equal(admissionFromEvent({ ...event, data: { ...event.data, item: { type, payload } } }, "project"), undefined)
   assert.equal(admissionFromEvent({ ...event, type: "session.message.updated" }, "project"), undefined)
-  assert.equal(admittedText({ text: "text", agents: [{ mention: { start: -1, end: 2, text: "te" } }] }), "text")
+  assert.equal(admittedText({ text: "text", agents: [{ mention: { start: -1, end: 2, text: "absent" } }] }), "")
+})
+
+test("mention redaction does not mistake terminal editor offsets for UTF-16 slice indices", () => {
+  const text = "中 @private-file gives advices."
+  assert.equal(admittedText({ text, files: [{ mention: { start: 3, end: 16, text: "@private-file" } }] }),
+    "中 [omitted] gives advices.")
+  assert.equal(admittedText({ text: "@file @file gives advices.", files: [{ mention: { start: 6, end: 11, text: "@file" } }] }),
+    "@file [omitted] gives advices.")
+})
+
+test("unresolvable and oversized mention input is skipped without exposing detached labels", () => {
+  const text = "@file @file gives advices."
+  for (const label of ["@file", "@other", "", "x".repeat(MAX_INPUT + 1)]) {
+    assert.equal(admittedText({ text, agents: [{ mention: { start: 2, end: 7, text: label } }] }), "")
+  }
+  assert.equal(admittedText({ text: "a".repeat(MAX_INPUT + 1) }), "")
+  assert.equal(admittedText({ text, files: Array(1000).fill({ mention: { start: 0, end: 5, text: "@file" } }) }), "")
 })
 
 test("teacher guidance is loaded per request and file failures never call the provider", async () => {
@@ -351,6 +368,64 @@ test("a move missed during persistence is rolled back before another location ca
     yield* eventually(() => f.changes.length > before)
     assert.equal((yield* f.store.state("one")).count, 0)
     assert.equal(f.notifications.length, 0)
+  })))
+})
+
+test("a move during the authorized final write keeps the record but sends no stale toast", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const f = yield* setup()
+    f.onSet((key, value) => {
+      if (key.endsWith("/state") && value && typeof value === "object" && "count" in value && value.count === 1 && !("pending" in value))
+        f.sessions.get("one")!.directory = "elsewhere"
+    })
+    yield* f.teacher.admit(admission(1))
+    yield* eventually(() => f.calls.length === 1)
+    const before = f.changes.length
+    yield* Deferred.succeed(f.calls[0].result, corrected)
+    yield* eventually(() => f.changes.length > before)
+    assert.equal((yield* f.store.state("one")).count, 1)
+    assert.deepEqual(f.notifications, [])
+  })))
+})
+
+test("history reads do not return data to the old workspace after a move during storage access", async () => {
+  for (const method of ["list", "view", "status"] as const) {
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const f = fakeHost()
+      const memory = memoryStorage()
+      const teacher = yield* createTeacher(f.host, createStore({ ...memory.storage, get: (key) => memory.storage.get(key).pipe(
+        Effect.tap(() => Effect.sync(() => { f.sessions.get("one")!.workspaceID = "other-workspace" })),
+      ) }), { enabledByDefault: true })
+      const reading: Effect.Effect<unknown, unknown> = teacher[method]("one")
+      assert.ok(Exit.isFailure(yield* Effect.exit(reading)))
+    })))
+  }
+})
+
+test("a toggle cannot acknowledge the old owner if the session moved during the authorized write", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const f = yield* setup()
+    f.onSet((key, value) => {
+      if (key.endsWith("/state") && value && typeof value === "object" && "enabled" in value && !("setting" in value))
+        f.sessions.get("one")!.directory = "elsewhere"
+    })
+    assert.ok(Exit.isFailure(yield* Effect.exit(f.teacher.setEnabled("one", false))))
+    assert.equal((yield* f.store.state("one")).enabled, false)
+  })))
+})
+
+test("notification failure does not reclassify a saved correction as a model failure", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const f = fakeHost()
+    const teacher = yield* createTeacher({ ...f.host, corrected: () => Effect.fail(new Error("notification unavailable")) },
+      createStore(memoryStorage().storage), { enabledByDefault: true })
+    yield* teacher.admit(admission(1))
+    yield* eventually(() => f.calls.length === 1)
+    yield* Deferred.succeed(f.calls[0].result, corrected)
+    yield* settled(teacher)
+    const status = yield* teacher.status("one")
+    assert.equal(status.count, 1)
+    assert.equal(status.error, null)
   })))
 })
 

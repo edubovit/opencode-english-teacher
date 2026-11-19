@@ -45,6 +45,18 @@ test("explicit copied passages and diffs stop at a blank separator", () => {
   assert.equal(prepareText("diff --git a/x b/x\n--- a/x\n+++ b/x\n+wrong words\n\nPlease fixes this."), "Please fixes this.")
 })
 
+test("filters standalone unified diffs even when their first hunk is not the first line", () => {
+  const patch = "--- original.txt\n+++ revised.txt\n@@ -1 +1 @@\n-This are old\n+This are new"
+  assert.equal(prepareText(patch), "")
+  assert.equal(prepareText(`Please checks this.\n${patch}\n\nThese changes looks fine.`), "Please checks this.\n\nThese changes looks fine.")
+})
+
+test("inline code with shorter backtick runs does not expose its contents", () => {
+  assert.equal(prepareText("This are ``a ` private words ` b`` today."), "This are [omitted] today.")
+  assert.equal(prepareText("``a ` private words ` b``"), "")
+  assert.equal(prepareText("An unmatched ` tick before ``some code``."), "An unmatched ` tick before [omitted].")
+})
+
 test("removed source regions keep surrounding phrases separate", () => {
   assert.equal(prepareText("I has this\n> Some copied text\nthat works."), "I has this\n\nthat works.")
   assert.equal(prepareText("[This are not JSON]"), "[This are not JSON]")

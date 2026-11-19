@@ -2,7 +2,7 @@
 
 ## Setup
 
-Use Node 24+ and npm. Dependencies are pinned in `package-lock.json`. The development baseline is OpenCode 2.2.5, Effect 4.0.6, OpenTUI 0.8.0, and Solid 1.9.18.
+Use Node 24+ and npm. The plugin, client and theme packages target [OpenCode 2.3.2](https://github.com/anomalyco/opencode/releases/tag/v2.3.2). Development uses the [host's runtime versions](https://github.com/anomalyco/opencode/blob/v2.3.2/package.json): Effect 4.1.0, OpenTUI 0.8.4, Solid 1.9.17 and Bun 1.4.4. Keep the lockfile in sync; do not resolve host peers with `--force`.
 
 ```sh
 npm ci --ignore-scripts
@@ -42,13 +42,13 @@ Test package contents with `npm pack --dry-run`. Test a freshly packed install t
 ## Architecture
 
 - The server observes successful user admissions. It ignores children, synthetic/control input, and foreign locations.
-- Local filtering removes obvious source/code material. Global user-owned teacher instructions, a fixed response/isolation contract, and one filtered message form a stateless request. Language/authorship decisions that cannot be made locally remain conservative model judgments.
-- Configuration determines model/variant precedence. Session metadata is used only for routing, eligibility, and model selection; it is never analysis input.
+- Local filtering removes obvious source/code material. Mention offsets must match the admitted text; a shifted offset is usable only when the label has one unambiguous match. If it cannot be located safely, skip the message. Global user-owned teacher instructions, a fixed response/isolation contract, and one filtered message form a stateless request. Language/authorship decisions that cannot be made locally remain conservative model judgments.
+- Configuration determines model/variant precedence. The teacher inherits the catalog selection, not a later `experimental.model.resolve` rewrite in the [session runner](https://github.com/anomalyco/opencode/blob/v2.3.2/packages/core/src/session/runner/model.ts). Session metadata is used only for routing, eligibility, and model selection; it is never analysis input.
 - Plugin storage owns corrections and session settings. Native session history, metadata, and model state are not modified.
 - Authenticated native RPC connects the server and TUI. Shared schemas validate inputs, outputs, stored comments, and model results.
 - Corrections are rendered by the UI, not copied as arbitrary model-formatted Markdown. Page Up means older; Page Down means newer.
 
-The public stateless API is `ctx.experimental.generate.text`. Do not substitute `session.generate`, which includes history and agent context. The 2.2.5 Promise plugin API adapter does not forward API request cancellation signals; the server uses Effect lifetime/interruption and stale-result guards instead.
+The public stateless API is `ctx.experimental.generate.text`. Do not substitute `session.generate`, which includes history and agent context. The [2.3.2 Promise plugin adapter](https://github.com/anomalyco/opencode/blob/v2.3.2/packages/plugin/src/promise/adapter.ts) does not forward API request cancellation signals; the server uses Effect lifetime/interruption and stale-result guards instead.
 
 The stateless response exposes text, not usage or finish-reason metadata. Schema validation catches malformed/truncated JSON; it cannot prove semantic completeness or that a provider stopped for the intended reason.
 
@@ -62,7 +62,7 @@ The stateless response exposes text, not usage or finish-reason metadata. Schema
 - Persist before notifying. A storage failure is not a successful correction.
 - Do not replay missed events or restart saved jobs. Subscriptions are live-only.
 - Sort by source admission order, never completion order. Do not jump to a newly completed comment while an older one is being read.
-- RPC handlers revalidate session/location. TUI cache state is not write authority.
+- RPC handlers recheck the session's location after history reads and setting writes. After a comment is saved, recheck ownership before notifying; a failed notification does not invalidate the saved comment. TUI cache state is not write authority.
 - Error text is sanitized. Do not log prompts, corrections, credentials, or raw provider output.
 
 Operational limits are constants: two simultaneous requests and 100 waiting jobs per location, a 120-second analysis deadline including queue/preflight time, and 64,000 UTF-16 characters of raw input. The deadline does not forcibly interrupt final persistence or recovery cleanup. Deletion reconciliation visits up to 25 stored session owners per minute per location and also runs on access. These are not extra configuration options.
